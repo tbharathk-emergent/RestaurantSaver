@@ -1,0 +1,44 @@
+{
+  "summary": "First iteration end-to-end testing of Restaurant OPS BOM. Authored 38-test pytest regression suite covering auth (OTP/JWT/master-OTP/me), tenant isolation, menu items, raw materials, BOM versioning, suppliers, sales, inventory (current_stock sync), purchases (stock increment), wastage, prepared food, dashboard, variations engine, reports (sales/wastage/item-costing/low-stock), wallet (summary/topup), subscription mock Razorpay flow, super-admin (tenants/plans/revenue/status toggle, role-gating), and AI Insights (real Claude 4.5 call + ₹2 wallet deduction). Initial run hit 3 failures, all rooted in the same bug (Motor mutates dict with ObjectId after insert_one). Patched 3 endpoints (boms/sales/purchases) to pop '_id' before returning. After fix: 38/38 backend pass. Frontend smoke covered login flow (owner→/, super_admin→/admin), dashboard KPIs (Today's Sales ₹9,250, Profit ₹7,485, Red Alerts 10), bottom nav (Home/Sales/Stock/Menu/More), Variations (severity colors+messages), Sales list, New Sale form, Wallet, Subscription plans, Settings (lang/color), AI Insights, BOM, Super Admin (Tenants/Plans tabs).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/boms, /api/sales, /api/purchases", "issue": "Returned doc with mutated _id ObjectId from Motor insert_one (HTTP 500 on creation). FIXED by popping _id before return."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login", "issues": ["Try-demo phone hint text uses very light grey on white — acceptable but could be slightly darker for contrast on small phones."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: apply the same _id-pop pattern as a generic helper (e.g., insert-and-strip wrapper) in all routes to prevent regression elsewhere.",
+    "Optional: add explicit data-testid attributes to login phone/otp inputs and primary CTAs to make UI tests faster/more deterministic (current selectors worked via role/text).",
+    "Consider hashing/protecting JWT_SECRET more (currently a hard-coded dev value in .env)."
+  ],
+  "critical_code_review_comments": [
+    "MongoDB _id leakage pattern: any time you reuse the dict passed to insert_one, ObjectId leaks into the JSON response. The fix applied here is local — auditing all routes for this pattern (or centralising via a helper) is recommended.",
+    "auth.py JWT_SECRET defaults to 'dev-secret' if env missing — keep that fail-fast in prod.",
+    "routes_analytics.py is large (~460 lines); compute_variations is intricate and would benefit from unit tests independent of HTTP.",
+    "wastage from inventory.wastage field is subtracted from actual_use but UI/route create_wastage in /api/wastage does NOT update inventory entries — slight duplication risk; ensure docs clarify which one drives variation severity.",
+    "AI Insights returns raw LLM text (possibly with code fences) — frontend should defensively parse before bullet-rendering."
+  ],
+  "updated_files": [
+    "/app/backend/routes_core.py",
+    "/app/backend/routes_ops.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (38/38)", "frontend": "100% smoke-pass on all visited routes"},
+  "test_credentials": "Owner phone 9999999999, OTP 123456 / Super Admin phone 1111111111, OTP 123456 (master OTP). Fresh-tenant phones auto-create new isolated tenants.",
+  "seed_data_creation": "Demo tenant 'Sai Ram Tiffins (Demo)' is auto-seeded by backend startup (idempotent). Includes 7 menu items, 13 raw materials, 7 BOMs, sample sales for today, 5 inventory entries.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest regression suite at /app/backend/tests/backend_test.py — run `pytest /app/backend/tests/backend_test.py -v` for a one-shot smoke. Master OTP 123456 always works. Use phone 9999999999 for tenant-owner flows and 1111111111 for super-admin. Fresh phones auto-create new tenants; use random phone for isolation tests. Backend has hot-reload. The fix applied was popping `_id` after insert_one on boms/sales/purchases — keep an eye on other endpoints if E1 adds new POSTs.",
+  "rca_of_the_issue": "Motor's AsyncIOMotorCollection.insert_one mutates the input dict in place, appending `_id: ObjectId(...)`. Three endpoints (create_bom, create_sale, create_purchase) called `await db.X.insert_one(doc)` and then `return doc`, causing FastAPI's JSON serializer to raise 'ObjectId is not iterable' and return 500. Reproduction: POST /api/sales with a valid SaleIn body → 500. Mitigation applied: insert `doc.pop('_id', None)` before returning. Verified by re-running the failed 3 tests + full suite (38/38 pass)."
+}
