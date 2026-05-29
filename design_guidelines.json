@@ -1,0 +1,91 @@
+{
+  "theme": {
+    "mode": "light",
+    "archetype": "Archetype 1 (Organic & Earthy) - Utility Variant",
+    "description": "A highly functional, mobile-first PWA designed for rural restaurant owners. It borrows the trust, simplicity, and color-coded clarity of apps like KhataBook. Emphasizes legibility, large touch targets, and stark contrast between success (green) and danger (red)."
+  },
+  "colors": {
+    "background": "#F9FAFB",
+    "surface": "#FFFFFF",
+    "primary": "#16A34A",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#F3F4F6",
+    "secondary_foreground": "#111827",
+    "success": "#16A34A",
+    "danger": "#DC2626",
+    "warning": "#F59E0B",
+    "muted": "#6B7280",
+    "border": "#E5E7EB",
+    "text_primary": "#111827",
+    "text_secondary": "#4B5563"
+  },
+  "typography": {
+    "font_families": {
+      "heading": "Outfit, sans-serif",
+      "body": "'IBM Plex Sans', sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "h3": "text-lg font-medium",
+      "body": "text-base",
+      "small": "text-sm text-gray-500",
+      "numbers": "font-mono font-medium tracking-tight"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "max-w-md mx-auto w-full pb-24",
+    "padding": "p-4 sm:p-6",
+    "gap": "gap-4 sm:gap-6",
+    "cards": "bg-white rounded-xl border border-gray-200 p-4 shadow-sm",
+    "buttons": "h-12 sm:h-14 px-6 rounded-lg font-medium w-full flex items-center justify-center",
+    "inputs": "h-12 w-full rounded-lg border-gray-300 bg-gray-50 px-4 text-base focus:ring-2 focus:ring-primary focus:border-transparent",
+    "tap_targets": "min-h-[48px] min-w-[48px]"
+  },
+  "components": {
+    "bottom_nav": "Fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 flex justify-around items-center z-50 max-w-md mx-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]",
+    "fab": "Fixed bottom-20 right-4 sm:right-auto sm:ml-[350px] h-14 w-14 bg-primary text-white rounded-full shadow-lg flex items-center justify-center z-40",
+    "kpi_card": "Flex flex-col justify-between p-4 bg-white rounded-xl border border-gray-200. Value should use large font (text-2xl font-bold) and distinct color (e.g., text-green-600 for profit).",
+    "list_item": "Flex justify-between items-center p-4 bg-white border-b border-gray-100 active:bg-gray-50",
+    "status_badge": "Inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+  },
+  "interactions_and_motion": {
+    "hover": "Not a priority as this is a mobile-first touch interface.",
+    "active": "active:scale-[0.98] active:bg-gray-50 transition-all duration-75 (Immediate feedback for rural users)",
+    "page_transition": "Simple fade-in (opacity-0 to opacity-100 over 150ms)",
+    "feedback": "Use Sonner for toasts. Toasts must be at the TOP for mobile so they don't get blocked by keyboards or bottom nav."
+  },
+  "accessibility": {
+    "contrast": "Ensure text contrast ratios exceed 4.5:1. Avoid light gray text on white.",
+    "touch": "All interactive elements must be at least 48x48px.",
+    "language": "UI must gracefully handle Hindi/Telugu strings which may be longer than English. Do not hardcode fixed widths.",
+    "indicators": "Never rely on color alone. Use icons (e.g., ArrowUp for profit, ArrowDown for loss) alongside Red/Green colors.",
+    "testing": "All interactive and key informational elements MUST include a data-testid attribute."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "placeholder_dhaba",
+        "url": "https://images.unsplash.com/photo-1774979160994-3306b4872084?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxpbmRpYW4lMjBkaGFiYSUyMHJlc3RhdXJhbnR8ZW58MHx8fHwxNzgwMDgwNjg3fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Two men stand outside a restaurant with a scooter."
+      },
+      {
+        "category": "placeholder_food_biryani",
+        "url": "https://images.unsplash.com/photo-1589302168068-964664d93dc0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwxfHxiaXJ5YW5pJTIwZGlzaHxlbnwwfHx8fDE3ODAwODA2OTR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Cooked food on white ceramic plate (Biryani)"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Build as a Mobile-First PWA: Default layout should be constrained to `max-w-md mx-auto min-h-screen bg-gray-50 relative`.",
+    "Use standard Tailwind utilities. Do not overcomplicate the CSS.",
+    "Implement bottom navigation for primary tabs: Home, Sales, Inventory, Menu.",
+    "Install and use `lucide-react` for icons.",
+    "Implement OTP login screen natively simulating phone number entry.",
+    "Color codes are critical for this audience: Green = Cash In/Profit, Red = Cash Out/Loss/Alert. Use them heavily in the UI to indicate status without reading.",
+    "Language support (English/Hindi/Telugu) implies you should setup a simple i18n structure or at least structure text in a way that is easily replaceable.",
+    "Avoid Shadcn 'Card' overhead if a simple div does the job, but use Shadcn for complex inputs like Select, Dialog, or Tabs.",
+    "All forms should have large touch targets (h-12 minimum for inputs and buttons).",
+    "Add 'data-testid' to all buttons, links, form inputs, menus, error messages, and confirmation texts using kebab-case role-based names."
+  ]
+}
