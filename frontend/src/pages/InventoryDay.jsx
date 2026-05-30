@@ -26,7 +26,7 @@ export default function InventoryDay() {
 
   const recompute = (r) => {
     const calc = num(r.opening_stock) + num(r.purchases_qty) - num(r.taken_out_qty)
-      + num(r.returned_to_storage) + num(r.adjustment) - num(r.staff_food);
+      + num(r.returned_to_storage) + num(r.adjustment) - num(r.staff_food) - num(r.leakage);
     const variance = num(r.actual_ending_stock) - calc;
     return { calculated_ending_stock: calc, variance };
   };
@@ -50,6 +50,7 @@ export default function InventoryDay() {
         opening_stock: num(r.opening_stock),
         returned_to_storage: num(r.returned_to_storage),
         staff_food: num(r.staff_food),
+        leakage: num(r.leakage),
         adjustment: num(r.adjustment),
         actual_ending_stock: num(r.actual_ending_stock),
         notes: r.notes || "",
@@ -122,8 +123,9 @@ export default function InventoryDay() {
                     <ReadOnly label="+ Purchases" value={r.purchases_qty} hint={auto ? "auto" : ""} />
                     <ReadOnly label="− Taken Out" value={r.taken_out_qty} hint={auto ? "auto" : ""} />
                     <NumberField label="+ Returned" value={r.returned_to_storage} onChange={(v) => update(idx, "returned_to_storage", v)} testId={`invday-ret-${idx}`} />
-                    <NumberField label="± Adjustment" value={r.adjustment} onChange={(v) => update(idx, "adjustment", v)} testId={`invday-adj-${idx}`} />
                     <NumberField label="− Staff Food" value={r.staff_food} onChange={(v) => update(idx, "staff_food", v)} testId={`invday-staff-${idx}`} />
+                    <NumberField label="− Leakage" value={r.leakage} onChange={(v) => update(idx, "leakage", v)} testId={`invday-leak-${idx}`} />
+                    <NumberField label="± Adjustment" value={r.adjustment} onChange={(v) => update(idx, "adjustment", v)} testId={`invday-adj-${idx}`} />
                   </div>
 
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 grid grid-cols-2 gap-2">

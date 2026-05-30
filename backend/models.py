@@ -201,6 +201,7 @@ class InventoryDay(BaseDoc):
     opening_stock: float = 0.0
     returned_to_storage: float = 0.0  # unused stock returned from kitchen
     staff_food: float = 0.0  # qty consumed by staff
+    leakage: float = 0.0  # storage leakage / pilferage
     adjustment: float = 0.0  # +/- correction (signed)
     actual_ending_stock: float = 0.0  # physical count
     notes: str = ""

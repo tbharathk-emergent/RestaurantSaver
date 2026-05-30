@@ -270,9 +270,10 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage, s
         opening = d.get("opening_stock") or 0
         returned = d.get("returned_to_storage") or 0
         staff = d.get("staff_food") or 0
+        leakage = d.get("leakage") or 0
         adj = d.get("adjustment") or 0
         actual_end = d.get("actual_ending_stock") or 0
-        calc_end = opening + pq - tq + returned + adj - staff
+        calc_end = opening + pq - tq + returned + adj - staff - leakage
         variance = actual_end - calc_end
         tol = mat.get("wastage_tolerance", 5.0) or 5.0
         base = max(calc_end, 1)
@@ -308,6 +309,7 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage, s
             "returned_to_storage": round(returned, 3),
             "adjustment": round(adj, 3),
             "staff_food": round(staff, 3),
+            "leakage": round(leakage, 3),
             "calculated_ending": round(calc_end, 3),
             "actual_ending": round(actual_end, 3),
             "variance": round(variance, 3),

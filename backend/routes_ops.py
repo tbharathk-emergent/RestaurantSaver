@@ -244,6 +244,7 @@ class InventoryDayIn(BaseModel):
     opening_stock: float = 0.0
     returned_to_storage: float = 0.0
     staff_food: float = 0.0
+    leakage: float = 0.0
     adjustment: float = 0.0
     actual_ending_stock: float = 0.0
     notes: str = ""
@@ -285,9 +286,10 @@ def _compute_inv_day(doc: dict, purchases_qty: float, taken_out_qty: float, wast
     opening = doc.get("opening_stock") or 0
     returned = doc.get("returned_to_storage") or 0
     staff = doc.get("staff_food") or 0
+    leakage = doc.get("leakage") or 0
     adj = doc.get("adjustment") or 0
     actual = doc.get("actual_ending_stock") or 0
-    calculated_ending = opening + purchases_qty - taken_out_qty + returned + adj - staff
+    calculated_ending = opening + purchases_qty - taken_out_qty + returned + adj - staff - leakage
     variance = actual - calculated_ending
     return {
         **doc,
@@ -338,6 +340,7 @@ async def inventory_day_by_date(date: str, claims: dict = Depends(require_tenant
             "opening_stock": 0,
             "returned_to_storage": 0,
             "staff_food": 0,
+            "leakage": 0,
             "adjustment": 0,
             "actual_ending_stock": 0,
             "notes": "",
