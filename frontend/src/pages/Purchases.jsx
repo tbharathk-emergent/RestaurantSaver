@@ -14,13 +14,23 @@ export function PurchasesList() {
   const [suppliers, setSuppliers] = useState([]);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    Promise.all([client.get("/purchases"), client.get("/raw-materials"), client.get("/suppliers")])
-      .then(([p, m, s]) => { setRows(p.data); setMaterials(m.data); setSuppliers(s.data); });
-  }, []);
+  const load = () => Promise.all([client.get("/purchases"), client.get("/raw-materials"), client.get("/suppliers")])
+    .then(([p, m, s]) => { setRows(p.data); setMaterials(m.data); setSuppliers(s.data); });
+  useEffect(() => { load(); }, []);
 
   const matMap = Object.fromEntries(materials.map(m => [m.id, m]));
   const supMap = Object.fromEntries(suppliers.map(s => [s.id, s]));
+
+  const togglePayment = async (p) => {
+    const next = p.payment_status === "paid" ? "pending" : "paid";
+    try {
+      await client.patch(`/purchases/${p.id}/payment-status`, { payment_status: next });
+      toast.success(next === "paid" ? "Marked as Paid" : "Marked as Pending");
+      load();
+    } catch {
+      toast.error("Failed to update");
+    }
+  };
 
   return (
     <Layout title="Purchases">
@@ -39,16 +49,20 @@ export function PurchasesList() {
           <ul className="space-y-2" data-testid="purchases-list">
             {rows.map(p => (
               <li key={p.id} className="bg-white rounded-xl border border-gray-200 p-3">
-                <div className="flex justify-between">
-                  <div>
-                    <p className="font-medium">{supMap[p.supplier_id]?.name || "Walk-in"}</p>
-                    <p className="text-xs text-gray-500">{p.date} · {p.items.length} items</p>
+                <div className="flex justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{supMap[p.supplier_id]?.name || "Walk-in"}</p>
+                    <p className="text-xs text-gray-500">{p.date} · {p.items.length} items{p.invoice_no ? ` · ${p.invoice_no}` : ""}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <p className="font-bold">₹{p.total_amount?.toFixed(0)}</p>
-                    <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block ${p.payment_status === "paid" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
-                      {p.payment_status}
-                    </p>
+                    <button
+                      onClick={() => togglePayment(p)}
+                      data-testid={`pay-toggle-${p.id}`}
+                      className={`mt-1 text-[10px] font-medium px-2 py-1 rounded-full active:scale-95 transition-transform ${p.payment_status === "paid" ? "bg-green-100 text-green-700 border border-green-200" : "bg-amber-100 text-amber-700 border border-amber-200"}`}
+                    >
+                      {p.payment_status === "paid" ? "✓ Paid" : "Tap to mark Paid"}
+                    </button>
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">

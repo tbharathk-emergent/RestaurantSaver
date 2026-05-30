@@ -12,6 +12,7 @@ import RawMaterials from "@/pages/RawMaterials";
 import BOMPage from "@/pages/BOM";
 import { SalesList, SaleNew } from "@/pages/Sales";
 import { InventoryList, InventoryNew } from "@/pages/Inventory";
+import StockIssues from "@/pages/StockIssues";
 import { PurchasesList, PurchaseNew } from "@/pages/Purchases";
 import Suppliers from "@/pages/Suppliers";
 import { WastageList, WastageNew } from "@/pages/Wastage";
@@ -52,8 +53,10 @@ function RoutesWrap() {
       <Route path="/bom" element={<PrivateRoute><BOMPage /></PrivateRoute>} />
       <Route path="/sales" element={<PrivateRoute><SalesList /></PrivateRoute>} />
       <Route path="/sales/new" element={<PrivateRoute><SaleNew /></PrivateRoute>} />
-      <Route path="/inventory" element={<PrivateRoute><InventoryList /></PrivateRoute>} />
-      <Route path="/inventory/new" element={<PrivateRoute><InventoryNew /></PrivateRoute>} />
+      <Route path="/inventory" element={<PrivateRoute><StockIssues /></PrivateRoute>} />
+      <Route path="/inventory/new" element={<PrivateRoute><StockIssues /></PrivateRoute>} />
+      <Route path="/inventory/advanced" element={<PrivateRoute><InventoryList /></PrivateRoute>} />
+      <Route path="/inventory/advanced/new" element={<PrivateRoute><InventoryNew /></PrivateRoute>} />
       <Route path="/purchases" element={<PrivateRoute><PurchasesList /></PrivateRoute>} />
       <Route path="/purchases/new" element={<PrivateRoute><PurchaseNew /></PrivateRoute>} />
       <Route path="/suppliers" element={<PrivateRoute><Suppliers /></PrivateRoute>} />

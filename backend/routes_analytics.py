@@ -49,6 +49,9 @@ async def _get_tenant_data(tenant_id: str, date_from: str, date_to: str):
     inventory = await db.inventory.find(
         {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
     ).to_list(5000)
+    stock_issues = await db.stock_issues.find(
+        {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+    ).to_list(5000)
     materials = await db.raw_materials.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
     menu_items = await db.menu_items.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
     boms = await db.boms.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
@@ -58,7 +61,7 @@ async def _get_tenant_data(tenant_id: str, date_from: str, date_to: str):
     purchases = await db.purchases.find(
         {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
     ).to_list(5000)
-    return sales, inventory, materials, menu_items, boms, wastage, purchases
+    return sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues
 
 
 def _latest_bom_per_item(boms: list):
@@ -70,8 +73,12 @@ def _latest_bom_per_item(boms: list):
     return latest
 
 
-def compute_variations(sales, inventory, materials, menu_items, boms, wastage):
-    """Returns per-material variation data + sales-side reverse variation."""
+def compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues=None):
+    """Returns per-material variation data + sales-side reverse variation.
+
+    For each material, "actual taken out" is derived from stock_issues when present,
+    else falls back to inventory entries (opening + purchases - closing - transfer - waste - staff).
+    """
     bom_by_item = _latest_bom_per_item(boms)
     mat_by_id = {m["id"]: m for m in materials}
     item_by_id = {m["id"]: m for m in menu_items}
@@ -95,10 +102,16 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage):
                 total = qty_in_mat_unit * (qty / batch)
                 expected_use[mat["id"]] = expected_use.get(mat["id"], 0.0) + total
 
-    # 2. Actual usage from inventory
-    # actual = opening + purchases - closing - transfer_out - wastage - staff_use
+    # 2. Actual usage (preferred: stock_issues; fallback: inventory entries)
     actual_use: Dict[str, float] = {}
+    materials_with_issues = set()
+    for si in (stock_issues or []):
+        materials_with_issues.add(si["material_id"])
+        actual_use[si["material_id"]] = actual_use.get(si["material_id"], 0.0) + (si.get("quantity") or 0)
+    # Fallback only for materials WITHOUT stock_issues entries
     for inv in inventory:
+        if inv["material_id"] in materials_with_issues:
+            continue
         actual = (
             (inv.get("opening_stock") or 0)
             + (inv.get("purchases") or 0)
@@ -131,17 +144,18 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage):
             message = "No usage today"
         elif diff > 0 and severity != "ok":
             message = (
-                f"{mat['name']} usage is high. Expected {exp:.2f} {mat['unit']}, "
-                f"actual {act:.2f} {mat['unit']}. Please check portion size, wastage, "
-                f"billing mistake, or stock entry."
+                f"{mat['name']}: took out {act:.2f} {mat['unit']}, "
+                f"but sales only need {exp:.2f} {mat['unit']}. "
+                f"Extra {abs(diff):.2f} {mat['unit']} — check wastage, staff food, or unbilled sales."
             )
         elif diff < 0 and severity != "ok":
             message = (
-                f"{mat['name']} usage is lower than expected. Expected {exp:.2f} {mat['unit']}, "
-                f"actual {act:.2f} {mat['unit']}. Please check stock entry or unbilled sales."
+                f"{mat['name']}: sales used {exp:.2f} {mat['unit']}, "
+                f"but only {act:.2f} {mat['unit']} taken from stock. "
+                f"Missing {abs(diff):.2f} {mat['unit']} — check stock entry or BOM."
             )
         else:
-            message = f"{mat['name']} usage is within tolerance."
+            message = f"{mat['name']} matches sales."
 
         rows.append({
             "material_id": mat["id"],
@@ -222,10 +236,10 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage):
 @router.get("/dashboard")
 async def dashboard(date: Optional[str] = None, claims: dict = Depends(require_tenant)):
     today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    sales, inventory, materials, menu_items, boms, wastage, purchases = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues = await _get_tenant_data(
         claims["tenant_id"], today, today
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage)
+    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
 
     total_sales = sum(s.get("total_amount", 0) or 0 for s in sales)
     if not total_sales:
@@ -291,10 +305,10 @@ async def variations(
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_from = date_from or today
     date_to = date_to or today
-    sales, inventory, materials, menu_items, boms, wastage, _ = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, _, stock_issues = await _get_tenant_data(
         claims["tenant_id"], date_from, date_to
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage)
+    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
     return {"date_from": date_from, "date_to": date_to, "material_variations": rows, "sales_variations": reverse_rows}
 
 
@@ -390,10 +404,10 @@ async def generate_ai_insight(body: AIRequest, claims: dict = Depends(require_te
 
     today = body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    sales, inventory, materials, menu_items, boms, wastage, purchases = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues = await _get_tenant_data(
         claims["tenant_id"], week_ago, today
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage)
+    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
 
     summary = {
         "today": today,

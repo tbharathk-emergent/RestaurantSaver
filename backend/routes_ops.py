@@ -5,7 +5,7 @@ from db import db
 from auth import require_tenant
 from models import (
     Sale, SaleLine, InventoryEntry, Purchase, PurchaseLine,
-    Wastage, PreparedFood, now_iso
+    Wastage, PreparedFood, StockIssue, now_iso
 )
 
 router = APIRouter(tags=["ops"])
@@ -168,6 +168,71 @@ async def update_purchase(pid: str, body: PurchaseIn, claims: dict = Depends(req
 @router.delete("/purchases/{pid}")
 async def delete_purchase(pid: str, claims: dict = Depends(require_tenant)):
     await db.purchases.delete_one({"id": pid, "tenant_id": claims["tenant_id"]})
+    return {"deleted": True}
+
+
+class PaymentStatusIn(BaseModel):
+    payment_status: str  # "pending" or "paid"
+
+
+@router.patch("/purchases/{pid}/payment-status")
+async def set_payment_status(pid: str, body: PaymentStatusIn, claims: dict = Depends(require_tenant)):
+    if body.payment_status not in ("pending", "paid"):
+        raise HTTPException(400, "Invalid status")
+    await db.purchases.update_one(
+        {"id": pid, "tenant_id": claims["tenant_id"]},
+        {"$set": {"payment_status": body.payment_status, "updated_at": now_iso()}},
+    )
+    return await db.purchases.find_one({"id": pid, "tenant_id": claims["tenant_id"]}, {"_id": 0})
+
+
+# ---------- Stock Issue (simple "took out X kg today") ----------
+class StockIssueIn(BaseModel):
+    outlet_id: Optional[str] = None
+    date: str
+    material_id: str
+    quantity: float
+    notes: str = ""
+
+
+@router.get("/stock-issues")
+async def list_stock_issues(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    claims: dict = Depends(require_tenant),
+):
+    q = {"tenant_id": claims["tenant_id"]}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    return await db.stock_issues.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+
+
+@router.post("/stock-issues")
+async def create_stock_issue(body: StockIssueIn, claims: dict = Depends(require_tenant)):
+    s = StockIssue(tenant_id=claims["tenant_id"], **body.model_dump())
+    await db.stock_issues.insert_one(s.model_dump())
+    # Decrement current stock on material
+    await db.raw_materials.update_one(
+        {"id": body.material_id, "tenant_id": claims["tenant_id"]},
+        {"$inc": {"current_stock": -body.quantity}, "$set": {"updated_at": now_iso()}},
+    )
+    return s.model_dump()
+
+
+@router.delete("/stock-issues/{sid}")
+async def delete_stock_issue(sid: str, claims: dict = Depends(require_tenant)):
+    existing = await db.stock_issues.find_one({"id": sid, "tenant_id": claims["tenant_id"]}, {"_id": 0})
+    if existing:
+        # restore stock
+        await db.raw_materials.update_one(
+            {"id": existing["material_id"], "tenant_id": claims["tenant_id"]},
+            {"$inc": {"current_stock": existing.get("quantity", 0)}, "$set": {"updated_at": now_iso()}},
+        )
+    await db.stock_issues.delete_one({"id": sid, "tenant_id": claims["tenant_id"]})
     return {"deleted": True}
 
 

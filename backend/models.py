@@ -182,6 +182,16 @@ class PreparedFood(BaseDoc):
     staff_food_qty: float = 0.0
 
 
+# ============ Stock Issue (simple "took out from stock today") ============
+class StockIssue(BaseDoc):
+    tenant_id: str
+    outlet_id: Optional[str] = None
+    date: str
+    material_id: str
+    quantity: float = 0.0
+    notes: str = ""
+
+
 # ============ Subscription Plan ============
 class SubscriptionPlan(BaseDoc):
     name: str

@@ -48,7 +48,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-4 gap-2">
           <QuickAction icon={Plus} label={t("addSale")} to="/sales/new" testId="qa-sale" />
           <QuickAction icon={ArrowDownToLine} label={t("addPurchase")} to="/purchases/new" testId="qa-purchase" />
-          <QuickAction icon={Boxes} label={t("addInventory")} to="/inventory/new" testId="qa-inv" />
+          <QuickAction icon={Boxes} label="Stock Used" to="/inventory" testId="qa-inv" />
           <QuickAction icon={AlertTriangle} label={t("addWastage")} to="/wastage/new" testId="qa-waste" />
         </div>
 
