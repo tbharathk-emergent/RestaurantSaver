@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, ChefHat, Boxes, FileText, Truck, Sparkles, Settings as SettingsIcon, AlertTriangle, ClipboardList, Wallet, CreditCard, Trash2, UtensilsCrossed } from "lucide-react";
+import { ChevronRight, ChefHat, Boxes, FileText, Truck, Sparkles, Settings as SettingsIcon, AlertTriangle, ClipboardList, Wallet, CreditCard, Trash2, UtensilsCrossed, Warehouse } from "lucide-react";
 import Layout from "@/components/Layout";
 import { useAuth } from "@/auth";
 import { useI18n } from "@/i18n";
@@ -16,6 +16,7 @@ export default function More() {
         { icon: UtensilsCrossed, label: t("rawMaterials"), to: "/raw-materials", testId: "more-mat" },
         { icon: ChefHat, label: t("bom"), to: "/bom", testId: "more-bom" },
         { icon: Truck, label: t("purchases"), to: "/purchases", testId: "more-pur" },
+        { icon: Warehouse, label: "Inventory (Storage)", to: "/inventory-day", testId: "more-invday" },
         { icon: Boxes, label: t("suppliers"), to: "/suppliers", testId: "more-sup" },
         { icon: Trash2, label: "Wastage", to: "/wastage", testId: "more-waste" },
         { icon: ClipboardList, label: t("preparedFood"), to: "/prepared-food", testId: "more-prep" },

@@ -52,6 +52,9 @@ async def _get_tenant_data(tenant_id: str, date_from: str, date_to: str):
     stock_issues = await db.stock_issues.find(
         {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
     ).to_list(5000)
+    inventory_days = await db.inventory_days.find(
+        {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+    ).to_list(5000)
     materials = await db.raw_materials.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
     menu_items = await db.menu_items.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
     boms = await db.boms.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(2000)
@@ -61,7 +64,7 @@ async def _get_tenant_data(tenant_id: str, date_from: str, date_to: str):
     purchases = await db.purchases.find(
         {"tenant_id": tenant_id, "date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
     ).to_list(5000)
-    return sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues
+    return sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues, inventory_days
 
 
 def _latest_bom_per_item(boms: list):
@@ -73,11 +76,12 @@ def _latest_bom_per_item(boms: list):
     return latest
 
 
-def compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues=None):
-    """Returns per-material variation data + sales-side reverse variation.
-
-    For each material, "actual taken out" is derived from stock_issues when present,
-    else falls back to inventory entries (opening + purchases - closing - transfer - waste - staff).
+def compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues=None, inventory_days=None, purchases=None):
+    """
+    Returns 3 result sets:
+      - material_variations (kitchen/sales reconciliation): expected_from_sales vs net_used_in_kitchen
+      - sales_variations (reverse: possible plates from materials vs actual sales)
+      - inventory_variances (storage reconciliation): calculated_ending vs actual_ending
     """
     bom_by_item = _latest_bom_per_item(boms)
     mat_by_id = {m["id"]: m for m in materials}
@@ -102,13 +106,25 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage, s
                 total = qty_in_mat_unit * (qty / batch)
                 expected_use[mat["id"]] = expected_use.get(mat["id"], 0.0) + total
 
-    # 2. Actual usage (preferred: stock_issues; fallback: inventory entries)
+    # 2. Net kitchen usage per material = taken_out - returned - wastage(material) - staff_food
     actual_use: Dict[str, float] = {}
     materials_with_issues = set()
     for si in (stock_issues or []):
         materials_with_issues.add(si["material_id"])
         actual_use[si["material_id"]] = actual_use.get(si["material_id"], 0.0) + (si.get("quantity") or 0)
-    # Fallback only for materials WITHOUT stock_issues entries
+    # Subtract returned/staff_food from inventory_days
+    for d in (inventory_days or []):
+        mid = d["material_id"]
+        if mid in actual_use:
+            actual_use[mid] -= (d.get("returned_to_storage") or 0)
+            actual_use[mid] -= (d.get("staff_food") or 0)
+    # Subtract material wastage
+    for w in wastage:
+        if w.get("kind") == "material" and w.get("material_id"):
+            mid = w["material_id"]
+            if mid in actual_use:
+                actual_use[mid] -= (w.get("quantity") or 0)
+    # Fallback only for materials WITHOUT stock_issues entries (legacy inventory)
     for inv in inventory:
         if inv["material_id"] in materials_with_issues:
             continue
@@ -144,15 +160,15 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage, s
             message = "No usage today"
         elif diff > 0 and severity != "ok":
             message = (
-                f"{mat['name']}: took out {act:.2f} {mat['unit']}, "
+                f"{mat['name']}: kitchen used {act:.2f} {mat['unit']} after deducting returned/wastage/staff food, "
                 f"but sales only need {exp:.2f} {mat['unit']}. "
-                f"Extra {abs(diff):.2f} {mat['unit']} — check wastage, staff food, or unbilled sales."
+                f"Extra {abs(diff):.2f} {mat['unit']} — check unbilled sales, portion size, or leakage."
             )
         elif diff < 0 and severity != "ok":
             message = (
-                f"{mat['name']}: sales used {exp:.2f} {mat['unit']}, "
-                f"but only {act:.2f} {mat['unit']} taken from stock. "
-                f"Missing {abs(diff):.2f} {mat['unit']} — check stock entry or BOM."
+                f"{mat['name']}: sales need {exp:.2f} {mat['unit']}, "
+                f"but kitchen only used {act:.2f} {mat['unit']}. "
+                f"Short by {abs(diff):.2f} {mat['unit']} — check BOM or sales entry."
             )
         else:
             message = f"{mat['name']} matches sales."
@@ -230,16 +246,88 @@ def compute_variations(sales, inventory, materials, menu_items, boms, wastage, s
             "message": message,
         })
 
-    return rows, reverse_rows
+    # 4. Inventory storage reconciliation per inventory_day entry
+    # purchases_qty per (date, material_id)
+    purchases_by_key: Dict[tuple, float] = {}
+    for p in (purchases or []):
+        for line in p.get("items", []):
+            key = (p.get("date"), line.get("material_id"))
+            purchases_by_key[key] = purchases_by_key.get(key, 0.0) + (line.get("quantity") or 0)
+    # taken_out per (date, material_id)
+    taken_by_key: Dict[tuple, float] = {}
+    for si in (stock_issues or []):
+        key = (si.get("date"), si.get("material_id"))
+        taken_by_key[key] = taken_by_key.get(key, 0.0) + (si.get("quantity") or 0)
+
+    inventory_variances = []
+    for d in (inventory_days or []):
+        mat = mat_by_id.get(d["material_id"])
+        if not mat:
+            continue
+        key = (d["date"], d["material_id"])
+        pq = purchases_by_key.get(key, 0.0)
+        tq = taken_by_key.get(key, 0.0)
+        opening = d.get("opening_stock") or 0
+        returned = d.get("returned_to_storage") or 0
+        staff = d.get("staff_food") or 0
+        adj = d.get("adjustment") or 0
+        actual_end = d.get("actual_ending_stock") or 0
+        calc_end = opening + pq - tq + returned + adj - staff
+        variance = actual_end - calc_end
+        tol = mat.get("wastage_tolerance", 5.0) or 5.0
+        base = max(calc_end, 1)
+        pct = variance / base * 100.0
+        if abs(pct) <= tol:
+            severity = "ok"
+        elif abs(pct) <= tol * 2:
+            severity = "warn"
+        else:
+            severity = "alert"
+        if abs(variance) < 0.001:
+            msg = f"{mat['name']}: storage tally matches."
+        elif variance < 0:
+            msg = (
+                f"{mat['name']}: storage shows {abs(variance):.2f} {mat['unit']} short. "
+                f"Calculated ending {calc_end:.2f}, actual {actual_end:.2f}. "
+                f"Check pilferage, missed entry, or weighing error."
+            )
+        else:
+            msg = (
+                f"{mat['name']}: storage shows {variance:.2f} {mat['unit']} extra. "
+                f"Calculated ending {calc_end:.2f}, actual {actual_end:.2f}. "
+                f"Check unrecorded purchase or duplicate return entry."
+            )
+        inventory_variances.append({
+            "date": d["date"],
+            "material_id": d["material_id"],
+            "material_name": mat["name"],
+            "unit": mat["unit"],
+            "opening_stock": round(opening, 3),
+            "purchases": round(pq, 3),
+            "taken_out": round(tq, 3),
+            "returned_to_storage": round(returned, 3),
+            "adjustment": round(adj, 3),
+            "staff_food": round(staff, 3),
+            "calculated_ending": round(calc_end, 3),
+            "actual_ending": round(actual_end, 3),
+            "variance": round(variance, 3),
+            "percent": round(pct, 2),
+            "severity": severity,
+            "message": msg,
+        })
+
+    return rows, reverse_rows, inventory_variances
 
 
 @router.get("/dashboard")
 async def dashboard(date: Optional[str] = None, claims: dict = Depends(require_tenant)):
     today = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues, inventory_days = await _get_tenant_data(
         claims["tenant_id"], today, today
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
+    rows, reverse_rows, inv_variances = compute_variations(
+        sales, inventory, materials, menu_items, boms, wastage, stock_issues, inventory_days, purchases
+    )
 
     total_sales = sum(s.get("total_amount", 0) or 0 for s in sales)
     if not total_sales:
@@ -275,8 +363,12 @@ async def dashboard(date: Optional[str] = None, claims: dict = Depends(require_t
 
     wastage_qty = sum(w.get("quantity", 0) for w in wastage)
     low_stock = [m for m in materials if (m.get("current_stock", 0) or 0) <= (m.get("min_stock", 0) or 0)]
-    red_alerts = [r for r in rows if r["severity"] == "alert"] + [r for r in reverse_rows if r["severity"] == "alert"]
-    high_var = [r for r in rows if r["severity"] in ("warn", "alert")]
+    red_alerts = (
+        [r for r in rows if r["severity"] == "alert"]
+        + [r for r in reverse_rows if r["severity"] == "alert"]
+        + [r for r in inv_variances if r["severity"] == "alert"]
+    )
+    high_var = [r for r in rows if r["severity"] in ("warn", "alert")] + [r for r in inv_variances if r["severity"] in ("warn", "alert")]
 
     return {
         "date": today,
@@ -290,6 +382,8 @@ async def dashboard(date: Optional[str] = None, claims: dict = Depends(require_t
         "high_variation_count": len(high_var),
         "low_stock_count": len(low_stock),
         "low_stock_items": low_stock[:10],
+        "inventory_variances_count": len([r for r in inv_variances if r["severity"] != "ok"]),
+        "inventory_variances": inv_variances[:10],
         "red_alerts": red_alerts[:10],
         "variations": rows[:30],
         "reverse_variations": reverse_rows[:30],
@@ -305,11 +399,19 @@ async def variations(
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_from = date_from or today
     date_to = date_to or today
-    sales, inventory, materials, menu_items, boms, wastage, _, stock_issues = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues, inventory_days = await _get_tenant_data(
         claims["tenant_id"], date_from, date_to
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
-    return {"date_from": date_from, "date_to": date_to, "material_variations": rows, "sales_variations": reverse_rows}
+    rows, reverse_rows, inv_variances = compute_variations(
+        sales, inventory, materials, menu_items, boms, wastage, stock_issues, inventory_days, purchases
+    )
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "material_variations": rows,
+        "sales_variations": reverse_rows,
+        "inventory_variances": inv_variances,
+    }
 
 
 @router.get("/reports/sales")
@@ -404,10 +506,12 @@ async def generate_ai_insight(body: AIRequest, claims: dict = Depends(require_te
 
     today = body.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues = await _get_tenant_data(
+    sales, inventory, materials, menu_items, boms, wastage, purchases, stock_issues, inventory_days = await _get_tenant_data(
         claims["tenant_id"], week_ago, today
     )
-    rows, reverse_rows = compute_variations(sales, inventory, materials, menu_items, boms, wastage, stock_issues)
+    rows, reverse_rows, inv_variances = compute_variations(
+        sales, inventory, materials, menu_items, boms, wastage, stock_issues, inventory_days, purchases
+    )
 
     summary = {
         "today": today,

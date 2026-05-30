@@ -5,7 +5,7 @@ from db import db
 from auth import require_tenant
 from models import (
     Sale, SaleLine, InventoryEntry, Purchase, PurchaseLine,
-    Wastage, PreparedFood, StockIssue, now_iso
+    Wastage, PreparedFood, StockIssue, InventoryDay, now_iso
 )
 
 router = APIRouter(tags=["ops"])
@@ -233,6 +233,157 @@ async def delete_stock_issue(sid: str, claims: dict = Depends(require_tenant)):
             {"$inc": {"current_stock": existing.get("quantity", 0)}, "$set": {"updated_at": now_iso()}},
         )
     await db.stock_issues.delete_one({"id": sid, "tenant_id": claims["tenant_id"]})
+    return {"deleted": True}
+
+
+# ---------- Inventory Day (storage reconciliation) ----------
+class InventoryDayIn(BaseModel):
+    outlet_id: Optional[str] = None
+    date: str
+    material_id: str
+    opening_stock: float = 0.0
+    returned_to_storage: float = 0.0
+    staff_food: float = 0.0
+    adjustment: float = 0.0
+    actual_ending_stock: float = 0.0
+    notes: str = ""
+
+
+async def _aggregates_for_day(tenant_id: str, date: str, material_id: str):
+    """Returns (purchases_qty, taken_out_qty, wastage_qty) for one material on one date."""
+    # Purchases: sum line.quantity where line.material_id == material_id, on this date
+    purchases = await db.purchases.find(
+        {"tenant_id": tenant_id, "date": date}, {"_id": 0}
+    ).to_list(2000)
+    purchases_qty = 0.0
+    for p in purchases:
+        for line in p.get("items", []):
+            if line.get("material_id") == material_id:
+                purchases_qty += line.get("quantity", 0) or 0
+
+    # Taken out: sum stock_issues
+    si_cur = db.stock_issues.find(
+        {"tenant_id": tenant_id, "date": date, "material_id": material_id}, {"_id": 0}
+    )
+    taken_out_qty = 0.0
+    async for si in si_cur:
+        taken_out_qty += si.get("quantity", 0) or 0
+
+    # Material wastage (kind == "material")
+    w_cur = db.wastage.find(
+        {"tenant_id": tenant_id, "date": date, "material_id": material_id, "kind": "material"},
+        {"_id": 0},
+    )
+    wastage_qty = 0.0
+    async for w in w_cur:
+        wastage_qty += w.get("quantity", 0) or 0
+
+    return purchases_qty, taken_out_qty, wastage_qty
+
+
+def _compute_inv_day(doc: dict, purchases_qty: float, taken_out_qty: float, wastage_qty: float):
+    opening = doc.get("opening_stock") or 0
+    returned = doc.get("returned_to_storage") or 0
+    staff = doc.get("staff_food") or 0
+    adj = doc.get("adjustment") or 0
+    actual = doc.get("actual_ending_stock") or 0
+    calculated_ending = opening + purchases_qty - taken_out_qty + returned + adj - staff
+    variance = actual - calculated_ending
+    return {
+        **doc,
+        "purchases_qty": round(purchases_qty, 3),
+        "taken_out_qty": round(taken_out_qty, 3),
+        "wastage_qty": round(wastage_qty, 3),
+        "calculated_ending_stock": round(calculated_ending, 3),
+        "variance": round(variance, 3),
+    }
+
+
+@router.get("/inventory-day")
+async def list_inventory_day(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    claims: dict = Depends(require_tenant),
+):
+    q = {"tenant_id": claims["tenant_id"]}
+    if date_from or date_to:
+        q["date"] = {}
+        if date_from:
+            q["date"]["$gte"] = date_from
+        if date_to:
+            q["date"]["$lte"] = date_to
+    rows = await db.inventory_days.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+    enriched = []
+    for r in rows:
+        pq, tq, wq = await _aggregates_for_day(claims["tenant_id"], r["date"], r["material_id"])
+        enriched.append(_compute_inv_day(r, pq, tq, wq))
+    return enriched
+
+
+@router.get("/inventory-day/by-date/{date}")
+async def inventory_day_by_date(date: str, claims: dict = Depends(require_tenant)):
+    """Returns a row per material for a given date, with stored values (if any) + computed aggregates."""
+    materials = await db.raw_materials.find({"tenant_id": claims["tenant_id"]}, {"_id": 0}).to_list(2000)
+    stored = await db.inventory_days.find(
+        {"tenant_id": claims["tenant_id"], "date": date}, {"_id": 0}
+    ).to_list(2000)
+    stored_by_mat = {s["material_id"]: s for s in stored}
+
+    rows = []
+    for m in materials:
+        doc = stored_by_mat.get(m["id"]) or {
+            "tenant_id": claims["tenant_id"],
+            "date": date,
+            "material_id": m["id"],
+            "opening_stock": 0,
+            "returned_to_storage": 0,
+            "staff_food": 0,
+            "adjustment": 0,
+            "actual_ending_stock": 0,
+            "notes": "",
+        }
+        pq, tq, wq = await _aggregates_for_day(claims["tenant_id"], date, m["id"])
+        enriched = _compute_inv_day(doc, pq, tq, wq)
+        enriched["material_name"] = m["name"]
+        enriched["unit"] = m["unit"]
+        rows.append(enriched)
+    return rows
+
+
+@router.post("/inventory-day")
+async def upsert_inventory_day(body: InventoryDayIn, claims: dict = Depends(require_tenant)):
+    existing = await db.inventory_days.find_one({
+        "tenant_id": claims["tenant_id"],
+        "date": body.date,
+        "material_id": body.material_id,
+        "outlet_id": body.outlet_id,
+    }, {"_id": 0})
+    if existing:
+        upd = body.model_dump()
+        upd["updated_at"] = now_iso()
+        await db.inventory_days.update_one(
+            {"id": existing["id"], "tenant_id": claims["tenant_id"]},
+            {"$set": upd},
+        )
+        doc = await db.inventory_days.find_one({"id": existing["id"]}, {"_id": 0})
+    else:
+        d = InventoryDay(tenant_id=claims["tenant_id"], **body.model_dump())
+        await db.inventory_days.insert_one(d.model_dump())
+        doc = d.model_dump()
+
+    pq, tq, wq = await _aggregates_for_day(claims["tenant_id"], body.date, body.material_id)
+    enriched = _compute_inv_day(doc, pq, tq, wq)
+    # Sync current_stock on material to actual_ending_stock
+    await db.raw_materials.update_one(
+        {"id": body.material_id, "tenant_id": claims["tenant_id"]},
+        {"$set": {"current_stock": body.actual_ending_stock, "updated_at": now_iso()}},
+    )
+    return enriched
+
+
+@router.delete("/inventory-day/{eid}")
+async def delete_inventory_day(eid: str, claims: dict = Depends(require_tenant)):
+    await db.inventory_days.delete_one({"id": eid, "tenant_id": claims["tenant_id"]})
     return {"deleted": True}
 
 
