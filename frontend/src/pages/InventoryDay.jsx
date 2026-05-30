@@ -119,7 +119,13 @@ export default function InventoryDay() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <NumberField label="Opening" value={r.opening_stock} onChange={(v) => update(idx, "opening_stock", v)} testId={`invday-open-${idx}`} />
+                    <NumberField
+                      label={r.prefilled_opening ? "Opening (from yesterday)" : "Opening"}
+                      value={r.opening_stock}
+                      onChange={(v) => update(idx, "opening_stock", v)}
+                      testId={`invday-open-${idx}`}
+                      highlight={r.prefilled_opening}
+                    />
                     <ReadOnly label="+ Purchases" value={r.purchases_qty} hint={auto ? "auto" : ""} />
                     <ReadOnly label="− Taken Out" value={r.taken_out_qty} hint={auto ? "auto" : ""} />
                     <NumberField label="+ Returned" value={r.returned_to_storage} onChange={(v) => update(idx, "returned_to_storage", v)} testId={`invday-ret-${idx}`} />
@@ -165,17 +171,17 @@ export default function InventoryDay() {
   );
 }
 
-function NumberField({ label, value, onChange, testId }) {
+function NumberField({ label, value, onChange, testId, highlight }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-medium text-gray-500 uppercase tracking-wide mb-0.5">{label}</span>
+      <span className={`block text-[10px] font-medium uppercase tracking-wide mb-0.5 ${highlight ? "text-blue-700" : "text-gray-500"}`}>{label}</span>
       <input
         type="number"
         step="0.01"
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         data-testid={testId}
-        className="h-9 w-full rounded-md border border-gray-300 bg-gray-50 px-2 text-sm font-mono focus:ring-2 focus:ring-green-500 focus:bg-white outline-none"
+        className={`h-9 w-full rounded-md border px-2 text-sm font-mono focus:ring-2 focus:ring-green-500 focus:bg-white outline-none ${highlight ? "border-blue-300 bg-blue-50" : "border-gray-300 bg-gray-50"}`}
         placeholder="0"
       />
     </label>

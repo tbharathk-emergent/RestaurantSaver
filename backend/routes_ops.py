@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
+from datetime import datetime, timedelta
 from db import db
 from auth import require_tenant
 from models import (
@@ -324,27 +325,66 @@ async def list_inventory_day(
 
 @router.get("/inventory-day/by-date/{date}")
 async def inventory_day_by_date(date: str, claims: dict = Depends(require_tenant)):
-    """Returns a row per material for a given date, with stored values (if any) + computed aggregates."""
+    """Returns a row per material for a given date, with stored values (if any) + computed aggregates.
+
+    For materials with no stored entry on this date, Opening Stock is auto-prefilled from
+    the previous day's Actual Ending Stock (if > 0), else from the previous day's Calculated Ending.
+    """
     materials = await db.raw_materials.find({"tenant_id": claims["tenant_id"]}, {"_id": 0}).to_list(2000)
     stored = await db.inventory_days.find(
         {"tenant_id": claims["tenant_id"], "date": date}, {"_id": 0}
     ).to_list(2000)
     stored_by_mat = {s["material_id"]: s for s in stored}
 
+    # Compute yesterday's date
+    try:
+        prev = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        prev = None
+
+    # Load yesterday's inventory_days
+    prev_by_mat = {}
+    if prev:
+        prev_rows = await db.inventory_days.find(
+            {"tenant_id": claims["tenant_id"], "date": prev}, {"_id": 0}
+        ).to_list(2000)
+        prev_by_mat = {r["material_id"]: r for r in prev_rows}
+
     rows = []
     for m in materials:
-        doc = stored_by_mat.get(m["id"]) or {
-            "tenant_id": claims["tenant_id"],
-            "date": date,
-            "material_id": m["id"],
-            "opening_stock": 0,
-            "returned_to_storage": 0,
-            "staff_food": 0,
-            "leakage": 0,
-            "adjustment": 0,
-            "actual_ending_stock": 0,
-            "notes": "",
-        }
+        existing = stored_by_mat.get(m["id"])
+        if existing:
+            doc = existing
+        else:
+            # Determine prefilled opening
+            opening_prefill = 0.0
+            prev_doc = prev_by_mat.get(m["id"])
+            if prev_doc:
+                prev_actual = prev_doc.get("actual_ending_stock") or 0
+                if prev_actual > 0:
+                    opening_prefill = prev_actual
+                else:
+                    # Fallback to yesterday's calculated ending
+                    p_pq, p_tq, _ = await _aggregates_for_day(claims["tenant_id"], prev, m["id"])
+                    p_open = prev_doc.get("opening_stock") or 0
+                    p_ret = prev_doc.get("returned_to_storage") or 0
+                    p_staff = prev_doc.get("staff_food") or 0
+                    p_leak = prev_doc.get("leakage") or 0
+                    p_adj = prev_doc.get("adjustment") or 0
+                    opening_prefill = p_open + p_pq - p_tq + p_ret + p_adj - p_staff - p_leak
+            doc = {
+                "tenant_id": claims["tenant_id"],
+                "date": date,
+                "material_id": m["id"],
+                "opening_stock": round(max(opening_prefill, 0), 3),
+                "returned_to_storage": 0,
+                "staff_food": 0,
+                "leakage": 0,
+                "adjustment": 0,
+                "actual_ending_stock": 0,
+                "notes": "",
+                "prefilled_opening": opening_prefill > 0,
+            }
         pq, tq, wq = await _aggregates_for_day(claims["tenant_id"], date, m["id"])
         enriched = _compute_inv_day(doc, pq, tq, wq)
         enriched["material_name"] = m["name"]
